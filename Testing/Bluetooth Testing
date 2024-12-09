@@ -1,0 +1,37 @@
+#include "BluetoothSerial.h"
+
+BluetoothSerial SerialBT;
+
+void setup() {
+  // Start the serial communication for debugging over USB
+  Serial.begin(115200);
+  
+  // Start Bluetooth Serial and give a name to the ESP32 Bluetooth device
+  if (!SerialBT.begin("ESP32_Test")) {
+    Serial.println("An error occurred initializing Bluetooth");
+    return;
+  }
+  Serial.println("Bluetooth Initialized! Now you can pair with ESP32.");
+
+  // Wait for Bluetooth to initialize
+  delay(1000);
+}
+
+void loop() {
+  // If data is available from the Bluetooth device, read it and print to Serial Monitor
+  if (SerialBT.available()) {
+    char received = SerialBT.read();  // Read a byte of data
+    Serial.print("Received: ");
+    Serial.println(received);          // Print the received byte to the Serial Monitor
+  }
+
+  // If data is available from the Serial Monitor (USB), send it to the Bluetooth device
+  if (Serial.available()) {
+    char data = Serial.read();        // Read a byte of data from USB Serial
+    SerialBT.write(data);             // Send the byte to the Bluetooth device
+    Serial.print("Sent: ");
+    Serial.println(data);             // Print the sent byte to Serial Monitor
+  }
+
+  delay(20);  // Small delay for stability
+}
