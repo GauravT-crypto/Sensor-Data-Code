@@ -1,0 +1,186 @@
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include "Adafruit_TSL2591.h"
+
+// BLE Libraries
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEServer.h>
+#include "BluetoothSerial.h"
+
+BluetoothSerial SerialBT; // Bluetooth Serial connection for logging
+
+// TSL2591 Sensor
+Adafruit_TSL2591 tsl = Adafruit_TSL2591(2591); // pass in a number for the sensor identifier
+
+// BLE Setup
+BLECharacteristic *pCharacteristic;
+bool deviceConnected = false;
+#define SERVICE_UUID        "your-service-uuid" // Define your BLE service UUID
+#define CHARACTERISTIC_UUID "your-characteristic-uuid" // Define your BLE characteristic UUID
+
+/**************************************************************************/
+/*
+    Displays some basic information on this sensor from the unified
+    sensor API sensor_t type
+*/
+/**************************************************************************/
+void displaySensorDetails(void)
+{
+  sensor_t sensor;
+  tsl.getSensor(&sensor);
+  Serial.println(F("------------------------------------"));
+  Serial.print  (F("Sensor:       ")); Serial.println(sensor.name);
+  Serial.print  (F("Driver Ver:   ")); Serial.println(sensor.version);
+  Serial.print  (F("Unique ID:    ")); Serial.println(sensor.sensor_id);
+  Serial.print  (F("Max Value:    ")); Serial.print(sensor.max_value); Serial.println(F(" lux"));
+  Serial.print  (F("Min Value:    ")); Serial.print(sensor.min_value); Serial.println(F(" lux"));
+  Serial.print  (F("Resolution:   ")); Serial.print(sensor.resolution, 4); Serial.println(F(" lux"));  
+  Serial.println(F("------------------------------------"));
+  Serial.println(F(""));  
+  delay(500);
+}
+
+/**************************************************************************/
+/*
+    Configures the gain and integration time for the TSL2591
+*/
+/**************************************************************************/
+void configureSensor(void)
+{
+  tsl.setGain(TSL2591_GAIN_MED);  // Set gain
+  tsl.setTiming(TSL2591_INTEGRATIONTIME_300MS); // Set integration time
+  Serial.println(F("------------------------------------"));
+  Serial.print  (F("Gain:         "));
+  tsl2591Gain_t gain = tsl.getGain();
+  switch(gain)
+  {
+    case TSL2591_GAIN_LOW:
+      Serial.println(F("1x (Low)"));
+      break;
+    case TSL2591_GAIN_MED:
+      Serial.println(F("25x (Medium)"));
+      break;
+    case TSL2591_GAIN_HIGH:
+      Serial.println(F("428x (High)"));
+      break;
+    case TSL2591_GAIN_MAX:
+      Serial.println(F("9876x (Max)"));
+      break;
+  }
+  Serial.print  (F("Timing:       "));
+  Serial.print((tsl.getTiming() + 1) * 100, DEC); 
+  Serial.println(F(" ms"));
+  Serial.println(F("------------------------------------"));
+  Serial.println(F(""));
+}
+
+/**************************************************************************/
+/*
+    Set up BLE and send sensor data
+*/
+/**************************************************************************/
+void setupBLE()
+{
+  BLEDevice::init("TSL2591 Sensor");
+  BLEServer *pServer = BLEDevice::createServer();
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  
+  pCharacteristic = pService->createCharacteristic(
+                        CHARACTERISTIC_UUID,
+                        BLECharacteristic::PROPERTY_READ |
+                        BLECharacteristic::PROPERTY_NOTIFY
+                      );
+  
+  pService->start();
+  
+  BLEAdvertising *pAdvertising = pServer->getAdvertising();
+  pAdvertising->start();
+  
+  Serial.println("BLE Device is advertising...");
+}
+
+/**************************************************************************/
+/*
+    Callback to handle BLE connection state
+*/
+/**************************************************************************/
+class MyServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer *pServer) {
+    deviceConnected = true;  // Device connected
+    Serial.println("Device Connected!");
+  }
+
+  void onDisconnect(BLEServer *pServer) {
+    deviceConnected = false; // Device disconnected
+    Serial.println("Device Disconnected!");
+  }
+};
+
+/**************************************************************************/
+/*
+    Read sensor data and send it over BLE
+*/
+/**************************************************************************/
+void sendSensorData()
+{
+  // Read Full Spectrum and Infrared values
+  uint32_t lux = tsl.getFullLuminosity();
+  uint16_t ir = lux >> 16;
+  uint16_t full = lux & 0xFFFF;
+  uint16_t visible = full - ir;
+  float luxValue = tsl.calculateLux(full, ir);
+
+  // Prepare the data to send
+  String lightData = "Lux: " + String(luxValue);
+
+  // If device is connected, send data via BLE
+  if (deviceConnected) {
+    pCharacteristic->setValue(lightData.c_str());
+    pCharacteristic->notify();  // Notify the phone with updated light data
+  }
+  Serial.println(lightData);  // Output to Serial Monitor as well
+}
+
+/**************************************************************************/
+/*
+    Setup function to initialize sensor and BLE
+*/
+/**************************************************************************/
+void setup(void) 
+{
+  Serial.begin(9600);
+  SerialBT.begin("ESP32_TSL2591"); // Start Bluetooth Serial for logging
+
+  Serial.println(F("Starting Adafruit TSL2591 Test!"));
+  
+  // Initialize the TSL2591 sensor
+  if (!tsl.begin()) 
+  {
+    Serial.println(F("No sensor found ... check your wiring?"));
+    while (1);
+  }
+  
+  // Display sensor details
+  displaySensorDetails();
+  
+  // Configure the sensor
+  configureSensor();
+
+  // Initialize BLE
+  setupBLE();
+  BLEDevice::getServer()->setCallbacks(new MyServerCallbacks());
+}
+
+/**************************************************************************/
+/*
+    Main loop that reads data and sends it via BLE
+*/
+/**************************************************************************/
+void loop(void) 
+{
+  // Send sensor data to BLE
+  sendSensorData();
+  
+  delay(500); // Delay to avoid overloading the Bluetooth connection
+}
